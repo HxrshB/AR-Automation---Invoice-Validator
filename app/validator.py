@@ -6,6 +6,7 @@ from .normalizer import normalize_contract, normalize_request, normalize_rig, no
 from .schemas import InvoiceData, ValidationResult
 
 MONEY_TOLERANCE = 0.01
+DISCOUNT_TOLERANCE = 0.99
 
 
 def _eq(a, b, tolerance=MONEY_TOLERANCE):
@@ -54,7 +55,12 @@ def get_discount_rate(contract_no, discount_rates: dict | None):
     return None if rate is None else float(rate)
 
 
-def validate(accounting: InvoiceData, jst: InvoiceData, discount_rates: dict):
+def validate(
+    accounting: InvoiceData,
+    jst: InvoiceData,
+    discount_rates: dict,
+    custom_discount_rate: float | None = None,
+):
     reasons: list[str] = []
 
     request_match = _request_match(accounting.request_number, jst.request_number)
@@ -80,7 +86,14 @@ def validate(accounting: InvoiceData, jst: InvoiceData, discount_rates: dict):
     jst_total = jst.grand_total_after_discount or jst.total_after_discount
     total_amount_match = _eq(accounting_total, jst_total)
 
-    expected_discount_percent = get_discount_rate(accounting.contract_no, discount_rates)
+    # A custom rate applies only to this validation run. It never changes the
+    # contract master/reference data.
+    if custom_discount_rate is not None:
+        expected_discount_percent = float(custom_discount_rate)
+        discount_rate_source = "CUSTOM"
+    else:
+        expected_discount_percent = get_discount_rate(accounting.contract_no, discount_rates)
+        discount_rate_source = "CONTRACT_MASTER"
     discount_percent_match = None
     discount_amount_match = None
 
@@ -90,14 +103,26 @@ def validate(accounting: InvoiceData, jst: InvoiceData, discount_rates: dict):
         expected_discount_amount = round(
             jst.grand_total_before_discount * expected_discount_percent / 100, 2
         )
-        discount_percent_match = _eq(jst.discount_amount, expected_discount_amount)
+        discount_difference = abs(float(jst.discount_amount) - float(expected_discount_amount))
+
+        # A discrepancy up to SAR 0.99 is tolerated for validation purposes.
+        # However, every non-zero discrepancy is reported so the tester/user can
+        # see even a small mismatch. A difference of SAR 1.00 or more fails the
+        # discount validation.
+        discount_percent_match = discount_difference <= DISCOUNT_TOLERANCE
         discount_amount_match = discount_percent_match
-        if not discount_percent_match:
+
+        if discount_difference > 0:
             reasons.append(
-                f"Discount mismatch: JST discount is {jst.discount_amount:.2f} SAR, "
-                f"but {expected_discount_percent:.2f}% of "
-                f"{jst.grand_total_before_discount:.2f} SAR equals "
-                f"{expected_discount_amount:.2f} SAR."
+                f"Discount discrepancy detected: JST discount is {jst.discount_amount:.2f} SAR, "
+                f"expected {expected_discount_amount:.2f} SAR, "
+                f"difference is {discount_difference:.2f} SAR."
+            )
+
+        if discount_difference > DISCOUNT_TOLERANCE:
+            reasons.append(
+                f"Discount difference exceeds the allowed tolerance of "
+                f"SAR {DISCOUNT_TOLERANCE:.2f}."
             )
     else:
         reasons.append("Insufficient JST financial data to verify the predefined discount.")
@@ -169,8 +194,11 @@ def validate(accounting: InvoiceData, jst: InvoiceData, discount_rates: dict):
         reasons=reasons,
         accounting=accounting,
         jst=jst,
+        discount_rate_used=expected_discount_percent,
+        discount_rate_source=discount_rate_source,
         reference={
             "contract_no": accounting.contract_no,
             "expected_discount_percent": expected_discount_percent,
+            "discount_rate_source": discount_rate_source,
         },
     )

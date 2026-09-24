@@ -54,6 +54,32 @@ jst_file = st.file_uploader(
     "JST / Service Report PDF", type=["pdf"], key="jst"
 )
 
+st.divider()
+st.subheader("Discount Validation")
+st.caption(
+    "Choose whether to validate the invoice using the contract's configured discount "
+    "or a custom percentage for this test."
+)
+
+discount_mode = st.radio(
+    "Discount validation method",
+    options=["Use Contract Discount", "Use Custom Discount"],
+    horizontal=True,
+    key="discount_mode",
+)
+
+custom_discount_rate = None
+if discount_mode == "Use Custom Discount":
+    custom_discount_rate = st.number_input(
+        "Enter Discount Percentage (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=0.0,
+        step=0.01,
+        format="%.2f",
+        help="This rate is used only for the current validation. It does not change the contract master data.",
+    )
+
 if st.button("Validate Documents", type="primary", use_container_width=True):
     if not accounting_file or not jst_file:
         st.error("Please upload both PDF documents.")
@@ -81,7 +107,12 @@ if st.button("Validate Documents", type="primary", use_container_width=True):
 
                 accounting = extract_fields(accounting_pages, "accounting")
                 jst = extract_fields(jst_pages, "jst")
-                result = validate(accounting, jst, load_rates())
+                result = validate(
+                    accounting,
+                    jst,
+                    load_rates(),
+                    custom_discount_rate=custom_discount_rate,
+                )
 
             st.divider()
             st.header("Validation Result")
@@ -111,15 +142,25 @@ if st.button("Validate Documents", type="primary", use_container_width=True):
 
             st.divider()
             st.subheader("Financial Verification")
-            rate = result.reference.get("expected_discount_percent")
+            rate = result.discount_rate_used
+            rate_source = result.discount_rate_source
             before = result.jst.grand_total_before_discount
             expected = None if rate is None or before is None else round(before * rate / 100, 2)
+            st.caption("Discount tolerance: differences up to SAR 0.99 are tolerated; SAR 1.00 or more fails the discount check. Any non-zero difference is reported.")
 
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Contract", result.reference.get("contract_no") or "Not extracted")
-            c2.metric("Configured Discount", f"{rate:.2f}%" if rate is not None else "Not configured")
+            c2.metric("Rate Used", f"{rate:.2f}%" if rate is not None else "Not available")
             c3.metric("Expected Discount", f"SAR {expected:,.2f}" if expected is not None else "Not available")
             c4.metric("JST Discount", f"SAR {result.jst.discount_amount:,.2f}" if result.jst.discount_amount is not None else "Not extracted")
+
+            if rate_source == "CUSTOM":
+                st.info(f"Custom discount rate used for this validation: {rate:.2f}%. Contract master data was not changed.")
+            elif rate_source == "CONTRACT_MASTER":
+                if rate is not None:
+                    _ = st.caption(f"Discount rate source: Contract master ({rate:.2f}%).")
+                else:
+                    _ = st.caption("Discount rate source: Contract master (no rate configured).")
 
             st.subheader("Invoice Totals")
             c1, c2 = st.columns(2)
@@ -129,7 +170,14 @@ if st.button("Validate Documents", type="primary", use_container_width=True):
             if result.reasons:
                 st.subheader("Review Notes")
                 for reason in result.reasons:
-                    st.write(f"• {reason}")
+                    if reason.startswith("Discount discrepancy detected:"):
+                        # Show even small discount discrepancies explicitly.
+                        # A discrepancy <= SAR 0.99 remains tolerated by the validator.
+                        st.error(f"⚠ {reason}")
+                    elif reason.startswith("Discount difference exceeds"):
+                        st.error(f"✗ {reason}")
+                    else:
+                        st.write(f"• {reason}")
 
             with st.expander("Extracted Accounting Information"):
                 st.json(result.accounting.model_dump(exclude={"raw_text_pages"}))

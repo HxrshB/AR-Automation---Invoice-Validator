@@ -233,12 +233,16 @@ def extract_jst_fields(pages: dict[int, str]) -> InvoiceData:
         summary = full
 
     summary_compact = _compact(summary)
-    request = normalize_request(_first_match([r"Client\s*Request\s*#\s*or\s*DRSS\s*#.*?\b(300\d{7})\b"], summary_compact))
+
+    # Request / DRSS are header identifiers. They MUST come from page 1 only.
+    # Do not fall back to later pages because those pages may contain other
+    # 300XXXXXXXX references belonging to supporting records.
+    request = _extract_request(header)
+    drss = _extract_drss(header) or request
+
     contract = normalize_contract(_first_match([r"Client\s*PO\s*or\s*Contract\s*#.*?\b(66\d{8})\b"], summary_compact))
     job_id = _first_match([r"Job\s*ID.*?\b(\d{5})\b"], summary_compact)
 
-    request = request or _extract_request(header) or _extract_request(full)
-    drss = _extract_drss(header) or request
     contract = contract or _extract_contract(header) or _extract_contract(full)
     well = _extract_well(header) or _extract_well(summary) or _extract_well(full)
     rig = _extract_rig(header) or _extract_rig(summary) or _extract_rig(full)

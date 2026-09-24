@@ -14,7 +14,12 @@ def load_discount_rates(path: str | Path = "data/mock_erp.json") -> dict:
     return {str(k): float(v) for k, v in data.get("discount_rates", {}).items()}
 
 
-def process_documents(accounting_pdf: str | Path, jst_pdf: str | Path, rates_path="data/mock_erp.json"):
+def process_documents(
+    accounting_pdf: str | Path,
+    jst_pdf: str | Path,
+    rates_path="data/mock_erp.json",
+    custom_discount_rate: float | None = None,
+):
     accounting_pages = ocr_pdf(accounting_pdf)
     jst_pages = ocr_pdf(jst_pdf)
 
@@ -26,4 +31,4 @@ def process_documents(accounting_pdf: str | Path, jst_pdf: str | Path, rates_pat
     accounting = extract_fields(accounting_pages, "accounting")
     jst = extract_fields(jst_pages, "jst")
     rates = load_discount_rates(rates_path)
-    return validate(accounting, jst, rates)
+    return validate(accounting, jst, rates, custom_discount_rate=custom_discount_rate)

@@ -36,6 +36,8 @@ class ValidationResult(BaseModel):
     discount_percent_match: Optional[bool] = None
     discount_amount_match: Optional[bool] = None
     total_after_discount_match: Optional[bool] = None
+    discount_rate_used: Optional[float] = None
+    discount_rate_source: Optional[str] = None
     reasons: list[str] = Field(default_factory=list)
     accounting: InvoiceData
     jst: InvoiceData

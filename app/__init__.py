@@ -1,1 +1,0 @@
-"""Invoice discount validation prototype."""
